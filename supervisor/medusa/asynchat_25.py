@@ -74,6 +74,7 @@ class async_chat (asyncore.dispatcher):
 
     def set_terminator (self, term):
         """Set the input delimiter.  Can be a fixed string of any length, an integer, or None"""
+        # 终止符可以是一串字符串，一个整型数字，或者None
         self.terminator = term
 
     def get_terminator (self):
@@ -86,11 +87,12 @@ class async_chat (asyncore.dispatcher):
 
     def handle_read (self):
         try:
+            # 读取最多4096字节数据
             data = self.recv (self.ac_in_buffer_size)
         except socket.error:
             self.handle_error()
             return
-
+        # self.ac_in_buffer存储读到的数据
         self.ac_in_buffer += data
 
         # Continue to search for self.terminator in self.ac_in_buffer,
@@ -98,26 +100,28 @@ class async_chat (asyncore.dispatcher):
         # is necessary because we might read several data+terminator
         # combos with a single recv(1024).
 
+        # in_buffer有数据
         while self.ac_in_buffer:
+            # 获得当前in_buffer大小
             lb = len(self.ac_in_buffer)
-            terminator = self.get_terminator()
-            if not terminator:
+            terminator = self.get_terminator()  # 获得预定长度
+            if not terminator:  # 不存在预设终结符就收集所有在in_buffer中的数据
                 # no terminator, collect it all
                 self.collect_incoming_data (self.ac_in_buffer)
-                self.ac_in_buffer = b''
-            elif isinstance(terminator, int) or isinstance(terminator, long):
+                self.ac_in_buffer = b''  # 清空in_buffer
+            elif isinstance(terminator, int) or isinstance(terminator, long):  # 存在终结符，且是一个预定长度
                 # numeric terminator
                 n = terminator
-                if lb < n:
-                    self.collect_incoming_data (self.ac_in_buffer)
+                if lb < n:   # 当前in_buffer大小 < 预定长度
+                    self.collect_incoming_data (self.ac_in_buffer)  # 收集所有在in_buffer中的数据
                     self.ac_in_buffer = b''
-                    self.terminator -= lb
-                else:
-                    self.collect_incoming_data (self.ac_in_buffer[:n])
-                    self.ac_in_buffer = self.ac_in_buffer[n:]
-                    self.terminator = 0
-                    self.found_terminator()
-            else:
+                    self.terminator -= lb  # 重设 预定长度 = 原本大小 - 当前in_buffer大小
+                else:  # 当前in_buffer大小 > 预定长度
+                    self.collect_incoming_data (self.ac_in_buffer[:n])  # 收集预定长度的数据
+                    self.ac_in_buffer = self.ac_in_buffer[n:]  # 剩余的部分继续存在in_buffer中
+                    self.terminator = 0  # 预定长度 = 0
+                    self.found_terminator()  # 找到终结符
+            else:  # 存在终结符，是一个字符串
                 # 3 cases:
                 # 1) end of buffer matches terminator exactly:
                 #    collect data, transition
@@ -125,29 +129,29 @@ class async_chat (asyncore.dispatcher):
                 #    collect data to the prefix
                 # 3) end of buffer does not match any prefix:
                 #    collect data
-                terminator_len = len(terminator)
+                terminator_len = len(terminator)  # 在缓冲区中搜索终结符
                 index = self.ac_in_buffer.find(terminator)
                 if index != -1:
                     # we found the terminator
                     if index > 0:
                         # don't bother reporting the empty string (source of subtle bugs)
-                        self.collect_incoming_data (self.ac_in_buffer[:index])
-                    self.ac_in_buffer = self.ac_in_buffer[index+terminator_len:]
+                        self.collect_incoming_data (self.ac_in_buffer[:index])  # 收集到终结符位置之前的数据
+                    self.ac_in_buffer = self.ac_in_buffer[index+terminator_len:]  # 存下剩余数据
                     # This does the Right Thing if the terminator is changed here.
-                    self.found_terminator()
+                    self.found_terminator()  # 钩子函数
                 else:
                     # check for a prefix of the terminator
-                    index = find_prefix_at_end (self.ac_in_buffer, terminator)
+                    index = find_prefix_at_end (self.ac_in_buffer, terminator)  # 在缓冲区最后找到终结符的前index部分
                     if index:
-                        if index != lb:
+                        if index != lb:  # index ！= 当前缓冲区中数据大小
                             # we found a prefix, collect up to the prefix
-                            self.collect_incoming_data (self.ac_in_buffer[:-index])
-                            self.ac_in_buffer = self.ac_in_buffer[-index:]
+                            self.collect_incoming_data (self.ac_in_buffer[:-index])  # 收集到那个位置之前的所有数据
+                            self.ac_in_buffer = self.ac_in_buffer[-index:]  # 保留下终结符的前index部分
                         break
                     else:
-                        # no prefix, collect it all
-                        self.collect_incoming_data (self.ac_in_buffer)
-                        self.ac_in_buffer = b''
+                        # no prefix, collect it all # 该情况就是缓冲区中的数据就是终结符的前index部分
+                        self.collect_incoming_data (self.ac_in_buffer) # 没找到前缀
+                        self.ac_in_buffer = b''  # 不需要它，直接清空
 
     def handle_write (self):
         self.initiate_send ()
@@ -157,21 +161,28 @@ class async_chat (asyncore.dispatcher):
 
     def push (self, data):
         data = as_bytes(data)
+        # 推入一个给定 数据的生产者
         self.producer_fifo.push(simple_producer(data))
+        # 发送
         self.initiate_send()
 
     def push_with_producer (self, producer):
+        # 直接推入给定的生产者
         self.producer_fifo.push (producer)
         self.initiate_send()
 
     def readable (self):
         """predicate for inclusion in the readable for select()"""
+        # 在输入缓冲区到达给定限度前都可读
+        # todo: 这样不会造成handle_read中的recv中被阻塞吗或者不阻塞直接报错吗
         return len(self.ac_in_buffer) <= self.ac_in_buffer_size
 
     def writable (self):
         """predicate for inclusion in the writable for select()"""
         # return len(self.ac_out_buffer) or len(self.producer_fifo) or (not self.connected)
         # this is about twice as fast, though not as clear.
+        # 在输出缓冲区不为空或生产队列不为空或不处于连接状态可写
+        #  todo: 在连接状态下就不停的handle_write
         return not (
                 (self.ac_out_buffer == b'') and
                 self.producer_fifo.is_empty() and
@@ -180,45 +191,49 @@ class async_chat (asyncore.dispatcher):
 
     def close_when_done (self):
         """automatically close this channel once the outgoing queue is empty"""
+        # 推出一个None标志一旦在refill中看到这个标志就立刻退出
         self.producer_fifo.push (None)
 
     # refill the outgoing buffer by calling the more() method
     # of the first producer in the queue
     def refill_buffer (self):
         while 1:
+            # 生产队列中有生产者
             if len(self.producer_fifo):
-                p = self.producer_fifo.first()
+                p = self.producer_fifo.first()  # 取出第一个生产者
                 # a 'None' in the producer fifo is a sentinel,
                 # telling us to close the channel.
-                if p is None:
-                    if not self.ac_out_buffer:
-                        self.producer_fifo.pop()
-                        self.close()
+                if p is None:  # 生产者对象是None
+                    if not self.ac_out_buffer:  # 输出缓冲区空
+                        self.producer_fifo.pop()  # 移除这个生产者
+                        self.close()  # 关闭此对象
                     return
-                elif isinstance(p, bytes):
-                    self.producer_fifo.pop()
+                elif isinstance(p, bytes):  # 是bytes
+                    self.producer_fifo.pop()  # 直接添加到输出缓冲区中
                     self.ac_out_buffer += p
                     return
-                data = p.more()
+                data = p.more() # 从该生产者对象中获得更多数据
                 if data:
-                    self.ac_out_buffer = self.ac_out_buffer + data
+                    self.ac_out_buffer = self.ac_out_buffer + data  # 有数据就添加到输出缓冲区
                     return
                 else:
-                    self.producer_fifo.pop()
+                    self.producer_fifo.pop() # 没有就移除这个生产者
             else:
+                # 没有生产这就直接返回
                 return
 
     def initiate_send (self):
         obs = self.ac_out_buffer_size
         # try to refill the buffer
         if len (self.ac_out_buffer) < obs:
-            self.refill_buffer()
+            self.refill_buffer()  # 填充数据到缓冲区中
 
-        if self.ac_out_buffer and self.connected:
+        if self.ac_out_buffer and self.connected:  # 输出缓冲区有值，且是连接状态下 否则什么也不做
             # try to send the buffer
-            try:
+            try:  # 将数据发送出去
                 num_sent = self.send (self.ac_out_buffer[:obs])
                 if num_sent:
+                    # 在输出缓冲区中保留没发送出去的部分
                     self.ac_out_buffer = self.ac_out_buffer[num_sent:]
 
             except socket.error:
@@ -227,6 +242,7 @@ class async_chat (asyncore.dispatcher):
 
     def discard_buffers (self):
         # Emergencies only!
+        # 清除所有的缓冲区
         self.ac_in_buffer = b''
         self.ac_out_buffer = b''
         while self.producer_fifo:
@@ -239,6 +255,7 @@ class simple_producer:
         self.data = data
         self.buffer_size = buffer_size
 
+    # 将初始化的数据存入result，不够存就放在data中等待下次调用more时存入，直到存完result返回一个空
     def more (self):
         if len (self.data) > self.buffer_size:
             result = self.data[:self.buffer_size]
@@ -289,6 +306,8 @@ class fifo:
 # re:        12820/s
 # regex:     14035/s
 
+# 该函数用于搜索一个字符串或它的部分(needle)是否在另一个字符串(haystack)的结尾
+# 存在，返回结尾部分的字符长度。不存在返回0
 def find_prefix_at_end (haystack, needle):
     l = len(needle) - 1
     while l and not haystack.endswith(needle[:l]):
