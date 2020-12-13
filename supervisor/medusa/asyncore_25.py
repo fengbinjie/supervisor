@@ -204,7 +204,7 @@ class dispatcher:
     accepting = False
     closing = False
     addr = None
-
+    # 每一个dispatcher相当于一个socket
     def __init__(self, sock=None, map=None):
         if map is None:
             self._map = socket_map
@@ -267,6 +267,7 @@ class dispatcher:
         self._fileno = sock.fileno()
         self.add_channel(map)
 
+    # 服务器用
     def set_reuse_addr(self):
         # try to re-use a server port if possible
         try:
@@ -293,17 +294,19 @@ class dispatcher:
     # ==================================================
     # socket object methods.
     # ==================================================
-
+    # 服务器用
     def listen(self, num):
         self.accepting = True
         if os.name == 'nt' and num > 5:
             num = 1
         return self.socket.listen(num)
 
+    # 服务器用
     def bind(self, addr):
         self.addr = addr
         return self.socket.bind(addr)
 
+    # 该函数给客户端用
     def connect(self, address):
         self.connected = False
         err = self.socket.connect_ex(address)
@@ -311,6 +314,7 @@ class dispatcher:
         if err in (EINPROGRESS, EALREADY, EWOULDBLOCK):
             return
         if err in (0, EISCONN):
+            # 连接成功
             self.addr = address
             self.connected = True
             self.handle_connect()
@@ -355,7 +359,7 @@ class dispatcher:
                 return b''
             else:
                 raise
-
+    # 从socketmap中移除并关闭自身
     def close(self):
         self.del_channel()
         self.socket.close()
@@ -377,24 +381,35 @@ class dispatcher:
             print('%s: %s' % (type, message))
 
     def handle_read_event(self):
+        # 服务器socket的可读事件
         if self.accepting:
             # for an accepting socket, getting a read implies
             # that we are connected
             if not self.connected:
                 self.connected = True
             self.handle_accept()
+        # 客户端socket第一次可读时调用handle_connect（该函数内部不一定是去实现连接服务器）
+        # ，并读取数据（非阻塞）
+
+        # 客户端本地socket一定不会执行这段代码，因为客户端本地socket客户端可读时，状态一定
+        # 是connected
         elif not self.connected:
             self.handle_connect()
             self.connected = True
             self.handle_read()
+        # 客户端socket除第一次可读外其余都是直接调用handle_read()
         else:
             self.handle_read()
 
     def handle_write_event(self):
         # getting a write implies that we are connected
+        # 假如未连接则调用handle_connect否则则是该连接有数据要写
         if not self.connected:
             self.handle_connect()
             self.connected = True
+        # 上面的if代码是给客户端使用，服务器端不会用到这段代码
+        # 当客户端应用代码不手动连接时就直接调用写函数，
+        # 则调用handle_connect来自动连接到服务器
         self.handle_write()
 
     def handle_expt_event(self):
@@ -443,7 +458,7 @@ class dispatcher:
 # adds simple buffered output capability, useful for simple clients.
 # [for more sophisticated usage use asynchat.async_chat]
 # ---------------------------------------------------------------------------
-
+# 继承这个类而不是继承dispathcer则可以获得一定的数据缓冲能力
 class dispatcher_with_send(dispatcher):
 
     def __init__(self, sock=None, map=None):
@@ -451,6 +466,8 @@ class dispatcher_with_send(dispatcher):
         self.out_buffer = b''
 
     def initiate_send(self):
+        # 没有发送出去的数据先保存下来
+        # 调用父类的send方法
         num_sent = dispatcher.send(self, self.out_buffer[:512])
         self.out_buffer = self.out_buffer[num_sent:]
 
@@ -458,18 +475,20 @@ class dispatcher_with_send(dispatcher):
         self.initiate_send()
 
     def writable(self):
+        # self.connected为False 或者写buffer还有数据要写则writable返回True
         return (not self.connected) or len(self.out_buffer)
 
     def send(self, data):
         if self.debug:
             self.log_info('sending %s' % repr(data))
+        # 将上次没发送出去的数据和这次要发送的数据一并发送出去
         self.out_buffer = self.out_buffer + data
         self.initiate_send()
 
 # ---------------------------------------------------------------------------
 # used for debugging.
 # ---------------------------------------------------------------------------
-
+# 小型的帧栈的追踪
 def compact_traceback():
     t, v, tb = sys.exc_info()
     tbinfo = []
